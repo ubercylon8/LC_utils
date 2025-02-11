@@ -45,38 +45,41 @@ show_file_changes() {
         echo -e "    📊 Stats: ${CYAN}$lines lines${NC}, ${CYAN}$size${NC}, Type: ${CYAN}.$ext${NC}"
         
         # Count changes
-        local additions=$(git diff --numstat HEAD "$file" | cut -f1)
-        local deletions=$(git diff --numstat HEAD "$file" | cut -f2)
+        local additions=$(git diff --numstat HEAD "$file" 2>/dev/null | cut -f1)
+        local deletions=$(git diff --numstat HEAD "$file" 2>/dev/null | cut -f2)
         if [[ ! -z "$additions" && ! -z "$deletions" ]]; then
             echo -e "    📈 Changes: ${GREEN}+$additions${NC} / ${RED}-$deletions${NC} lines"
         fi
         
         # Show git diff with some context
-        echo -e "    📝 Diff:"
-        git diff --color=always HEAD "$file" | sed 's/^/      /'
+        if git ls-files --error-unmatch "$file" >/dev/null 2>&1; then
+            echo -e "    📝 Diff:"
+            git diff --color=always HEAD "$file" | sed 's/^/      /'
+        else
+            echo -e "    📝 New file content:"
+            head -n 10 "$file" | sed 's/^/      /'
+            local total_lines=$(wc -l < "$file")
+            if [ "$total_lines" -gt 10 ]; then
+                echo "      ... (showing first 10 of $total_lines lines)"
+            fi
+        fi
     else
         echo -e "    ${RED}File has been deleted${NC}"
     fi
 }
 
-echo -e "${YELLOW}🔄 Syncing with GitHub...${NC}"
+echo -e "${YELLOW}📋 Changes Since Last Commit${NC}"
 
-# Get current branch name
+# Get current branch name and last commit info
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
+LAST_COMMIT=$(git log -1 --pretty=format:"%h - %s (%cr)" 2>/dev/null)
+if [ ! -z "$LAST_COMMIT" ]; then
+    echo -e "\n${BLUE}🔖 Current Branch: ${CYAN}$BRANCH${NC}"
+    echo -e "${BLUE}📅 Last Commit: ${CYAN}$LAST_COMMIT${NC}"
+fi
 
-# Fetch latest changes from remote
-echo -e "\n${YELLOW}📥 Fetching latest changes...${NC}"
-git fetch origin
-
-# Check if there are uncommitted changes
+# Check for uncommitted changes
 if [[ $(git status --porcelain) ]]; then
-    # Show status summary
-    echo -e "\n${YELLOW}📝 Changed files:${NC}"
-    git status --short
-
-    # Show detailed changelog
-    echo -e "\n${YELLOW}📋 Detailed Changelog:${NC}"
-    
     # Show new files
     echo -e "\n${GREEN}✨ New Files:${NC}"
     git status --porcelain | grep "^??" | cut -d' ' -f2- | while read -r file; do
@@ -119,41 +122,16 @@ if [[ $(git status --porcelain) ]]; then
     echo -e "  Deleted:  $(git status --porcelain | grep "^.D" | wc -l | tr -d ' ') files"
     echo -e "  Renamed:  $(git status --porcelain | grep "^R" | wc -l | tr -d ' ') files"
     echo -e "  ${GREEN}Total: $total_files files changed, +$total_additions insertions, -$total_deletions deletions${NC}"
-
-    # Get commit message
-    echo -e "\n${YELLOW}💭 Enter commit message (or press enter for default):${NC}"
-    read -r commit_msg
-    if [ -z "$commit_msg" ]; then
-        commit_msg="Update: $(date +'%Y-%m-%d %H:%M:%S')"
-    fi
-
-    # Add all changes
-    echo -e "\n${YELLOW}➕ Adding all changes...${NC}"
-    git add .
-
-    # Commit changes
-    echo -e "\n${YELLOW}📦 Committing changes...${NC}"
-    git commit -m "$commit_msg"
+else
+    echo -e "\n${GREEN}✨ No uncommitted changes${NC}"
 fi
 
-# Show incoming changes if any
-echo -e "\n${YELLOW}⬇️ Checking for incoming changes...${NC}"
-INCOMING_CHANGES=$(git log HEAD..origin/$BRANCH --oneline)
-if [ ! -z "$INCOMING_CHANGES" ]; then
-    echo -e "${BLUE}Incoming changes from GitHub:${NC}"
-    echo "$INCOMING_CHANGES" | sed 's/^/  /'
-    
-    # Show detailed incoming changes
-    echo -e "\n${BLUE}📋 Detailed incoming changes:${NC}"
-    git log HEAD..origin/$BRANCH --stat --color | sed 's/^/  /'
-fi
-
-# Pull latest changes
-echo -e "\n${YELLOW}⬇️ Pulling latest changes...${NC}"
-git pull origin $BRANCH
-
-# Push changes
-echo -e "\n${YELLOW}⬆️ Pushing changes...${NC}"
-git push origin $BRANCH
-
-echo -e "\n${GREEN}✅ Sync complete!${NC}" 
+# Show unpushed commits if any
+echo -e "\n${YELLOW}📤 Unpushed Commits:${NC}"
+UNPUSHED=$(git log @{u}.. --oneline 2>/dev/null)
+if [ ! -z "$UNPUSHED" ]; then
+    echo -e "${BLUE}The following commits haven't been pushed to GitHub:${NC}"
+    echo "$UNPUSHED" | sed 's/^/  /'
+else
+    echo -e "${GREEN}No unpushed commits${NC}"
+fi 
