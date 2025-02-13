@@ -44,25 +44,32 @@ type PayloadUploadResponse struct {
 //
 // Returns:
 //   - error: Any error that occurred during the operation
-func UploadPayload(orgID, apiKey, filePath string) error {
+func UploadPayload(orgID string, apiKey string, filePath string) error {
 	// Create credentials
 	creds := auth.NewCredentials(orgID, apiKey)
 	if err := creds.ValidateCredentials(); err != nil {
 		return fmt.Errorf("invalid credentials: %w", err)
 	}
 
+	// Get file name from path
 	fileName := filepath.Base(filePath)
 	url := fmt.Sprintf("%s/%s/%s", payloadEndpoint, orgID, fileName)
 
-	// Step 1: Get upload URL
+	// Create request
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	// Get JWT token and set authorization header
-	req.Header.Set("Authorization", creds.GetAuthHeader())
+	// Set API key in Authorization header
+	authHeader, err := creds.GetAuthHeader()
+	if err != nil {
+		return fmt.Errorf("error getting auth header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "application/json")
 
+	// Make request
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {

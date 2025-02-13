@@ -60,6 +60,7 @@ var (
 	taskInvestigationID string
 	taskReliable        bool
 	taskContext         string
+	taskTTL             int64
 
 	// Upload payloads flags
 	basePath  string
@@ -270,28 +271,49 @@ Example:
 	putCmd.PersistentFlags().StringVar(&taskInvestigationID, "investigation-id", "", "Investigation ID to tag the task with")
 	putCmd.PersistentFlags().BoolVar(&taskReliable, "reliable", false, "Use reliable tasking (will retry if sensor is offline)")
 	putCmd.PersistentFlags().StringVar(&taskContext, "context", "", "Context value for reliable tasking (only used with --reliable)")
+	putCmd.PersistentFlags().Int64Var(&taskTTL, "ttl", 604800, "Time-to-live in seconds for reliable tasking (default 1 week, only used with --reliable)")
 
 	// Run command
 	var runCmd = &cobra.Command{
 		Use:   "run",
-		Short: "Execute a command on sensors matching a hostname filter",
-		Long: `Execute a command on LimaCharlie sensors that match the specified hostname filter.
+		Short: "Execute a command on sensors matching filters",
+		Long: `Execute a command on LimaCharlie sensors that match the specified filters.
 		
 Example:
   # Run a command on all Windows sensors with hostname matching "web-*"
-  lc-sensors task run -o ORG_ID -k API_KEY --filter-platform windows --filter-hostname "web-*" --command "whoami"`,
+  lc-sensors task run -o ORG_ID -k API_KEY --filter-platform windows --filter-hostname "web-*" --command "whoami"
+  
+  # Run a command on all macOS sensors with hostname matching "dev-*"
+  lc-sensors task run -o ORG_ID -k API_KEY --filter-platform macos --filter-hostname "dev-*" --command "whoami"
+  
+  # Run a command on all sensors with a specific tag
+  lc-sensors task run -o ORG_ID -k API_KEY --filter-tag "production" --command "whoami"
+  
+  # Run multiple commands from a file with random delay on tagged sensors
+  lc-sensors task run -o ORG_ID -k API_KEY --filter-tag "web-server" --command-list commands.txt --random-delay --reliable`,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if oid == "" {
-				return fmt.Errorf("organization ID is required (set via --oid flag or LC_ORG_ID environment variable)")
+				return fmt.Errorf("--oid is required")
 			}
 			if apiKey == "" {
-				return fmt.Errorf("API key is required (set via --api-key flag or LC_API_KEY environment variable)")
+				return fmt.Errorf("--api-key is required")
 			}
-			if filterHostname == "" {
-				return fmt.Errorf("--filter-hostname is required")
+			if filterHostname == "" && filterTag == "" {
+				return fmt.Errorf("either --filter-hostname or --filter-tag is required")
 			}
 			if taskCommand == "" && taskCommandList == "" {
 				return fmt.Errorf("either --command or --command-list is required")
+			}
+			if taskCommand != "" && taskCommandList != "" {
+				return fmt.Errorf("cannot use both --command and --command-list")
+			}
+			// Validate platform value if provided
+			if filterPlatform != "" {
+				platform := strings.ToLower(filterPlatform)
+				if platform != "windows" && platform != "macos" && platform != "linux" {
+					return fmt.Errorf("--filter-platform must be one of: windows, macos, linux")
+				}
+				filterPlatform = platform // Store normalized value
 			}
 			return nil
 		},
@@ -299,14 +321,16 @@ Example:
 	}
 
 	// Run command flags
-	runCmd.PersistentFlags().StringVar(&filterHostname, "filter-hostname", "", "Filter sensors by hostname (supports wildcards *)")
-	runCmd.PersistentFlags().StringVar(&filterPlatform, "filter-platform", "", "Filter by platform (windows, macos, linux)")
-	runCmd.PersistentFlags().StringVar(&taskCommand, "command", "", "Command to execute (required if --command-list not specified)")
-	runCmd.PersistentFlags().StringVar(&taskCommandList, "command-list", "", "Path to a file containing commands to execute (one per line)")
-	runCmd.PersistentFlags().BoolVar(&taskRandomDelay, "random-delay", false, "Add random delay between commands (5-15 seconds)")
-	runCmd.PersistentFlags().StringVar(&taskInvestigationID, "investigation-id", "", "Investigation ID to tag the task with")
-	runCmd.PersistentFlags().BoolVar(&taskReliable, "reliable", false, "Use reliable tasking (will retry if sensor is offline)")
-	runCmd.PersistentFlags().StringVar(&taskContext, "context", "", "Context value for reliable tasking (only used with --reliable)")
+	runCmd.Flags().StringVar(&filterHostname, "filter-hostname", "", "Filter sensors by hostname (supports wildcards *)")
+	runCmd.Flags().StringVar(&filterTag, "filter-tag", "", "Filter sensors by tag (supports wildcards *)")
+	runCmd.Flags().StringVar(&filterPlatform, "filter-platform", "", "Filter by platform (windows, macos, linux)")
+	runCmd.Flags().StringVar(&taskCommand, "command", "", "Command to execute (required if --command-list not specified)")
+	runCmd.Flags().StringVar(&taskCommandList, "command-list", "", "Path to a file containing commands to execute (one per line)")
+	runCmd.Flags().BoolVar(&taskRandomDelay, "random-delay", false, "Add random delay between commands (5-15 seconds)")
+	runCmd.Flags().StringVar(&taskInvestigationID, "investigation-id", "", "Investigation ID to tag the task with")
+	runCmd.Flags().BoolVar(&taskReliable, "reliable", false, "Use reliable tasking (will retry if sensor is offline)")
+	runCmd.Flags().StringVar(&taskContext, "context", "", "Context value for reliable tasking (only used with --reliable)")
+	runCmd.Flags().Int64Var(&taskTTL, "ttl", 604800, "Time-to-live in seconds for reliable tasking (default 1 week, only used with --reliable)")
 
 	// Add commands to task
 	taskCmd.AddCommand(putCmd)
@@ -657,17 +681,8 @@ func runList(cmd *cobra.Command, args []string) {
 	// Print banner
 	fmt.Print(printBanner())
 
-	// Validate required flags
-	if oid == "" || apiKey == "" {
-		color.Red("Error: --oid and --api-key are required")
-		os.Exit(1)
-	}
-
 	// Initialize credentials
-	creds := &auth.Credentials{
-		OID:    oid,
-		APIKey: apiKey,
-	}
+	creds := auth.NewCredentials(oid, apiKey)
 
 	// Validate credentials
 	if err := creds.ValidateCredentials(); err != nil {
@@ -713,21 +728,18 @@ func runTag(cmd *cobra.Command, args []string) {
 	// Print banner
 	fmt.Print(printBanner())
 
-	// Validate required flags
-	if oid == "" || apiKey == "" {
-		color.Red("Error: --oid and --api-key are required")
+	// Initialize credentials
+	creds := auth.NewCredentials(oid, apiKey)
+
+	// Validate credentials
+	if err := creds.ValidateCredentials(); err != nil {
+		color.Red("Error: %v", err)
 		os.Exit(1)
 	}
 
 	if len(addTags) == 0 && len(removeTags) == 0 {
 		color.Red("Error: at least one of --add-tags or --remove-tags must be specified")
 		os.Exit(1)
-	}
-
-	// Initialize credentials
-	creds := &auth.Credentials{
-		OID:    oid,
-		APIKey: apiKey,
 	}
 
 	// Tag a single sensor
@@ -753,21 +765,18 @@ func runTagMultiple(cmd *cobra.Command, args []string) {
 	// Print banner
 	fmt.Print(printBanner())
 
-	// Validate required flags
-	if oid == "" || apiKey == "" {
-		color.Red("Error: --oid and --api-key are required")
+	// Initialize credentials
+	creds := auth.NewCredentials(oid, apiKey)
+
+	// Validate credentials
+	if err := creds.ValidateCredentials(); err != nil {
+		color.Red("Error: %v", err)
 		os.Exit(1)
 	}
 
 	if len(addTags) == 0 && len(removeTags) == 0 {
 		color.Red("Error: at least one of --add-tags or --remove-tags must be specified")
 		os.Exit(1)
-	}
-
-	// Initialize credentials
-	creds := &auth.Credentials{
-		OID:    oid,
-		APIKey: apiKey,
 	}
 
 	// List all sensors with their tags
@@ -989,15 +998,19 @@ func runRunTask(cmd *cobra.Command, args []string) {
 	fmt.Print(printBanner())
 
 	// Initialize credentials
-	creds := &auth.Credentials{
-		OID:    oid,
-		APIKey: apiKey,
+	creds := auth.NewCredentials(oid, apiKey)
+
+	// Validate credentials
+	if err := creds.ValidateCredentials(); err != nil {
+		color.Red("Error: %v", err)
+		os.Exit(1)
 	}
 
 	// List all sensors
 	color.Blue("Retrieving sensors...")
 	opts := &api.ListOptions{
-		WithTags: false, // We don't need tags for hostname filtering
+		WithTags:  true, // We need tags for filtering
+		FilterTag: filterTag,
 	}
 
 	sensors, err := api.ListSensors(creds, opts)
@@ -1006,18 +1019,39 @@ func runRunTask(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Filter sensors based on hostname
-	filtered := filterSensors(sensors, nil)
+	// Filter by platform if specified
+	var filtered []api.Sensor
+	if filterPlatform != "" {
+		for _, sensor := range sensors {
+			if strings.EqualFold(sensor.GetPlatformString(), filterPlatform) {
+				filtered = append(filtered, sensor)
+			}
+		}
+	} else {
+		filtered = sensors
+	}
 
 	if len(filtered) == 0 {
-		color.Yellow("No sensors match the hostname filter: %s", filterHostname)
+		if filterTag != "" && filterPlatform != "" {
+			color.Yellow("No sensors match the tag filter '%s' and platform filter '%s'", filterTag, filterPlatform)
+		} else if filterTag != "" {
+			color.Yellow("No sensors match the tag filter '%s'", filterTag)
+		} else if filterPlatform != "" {
+			color.Yellow("No sensors match the platform filter '%s'", filterPlatform)
+		} else {
+			color.Yellow("No sensors match the specified filters")
+		}
 		os.Exit(0)
 	}
 
 	// Confirm with user
-	color.Yellow("\nFound %d sensors matching hostname filter '%s':", len(filtered), filterHostname)
+	color.Yellow("\nFound %d sensors matching filters:", len(filtered))
 	for _, sensor := range filtered {
-		fmt.Printf("- %s (%s)\n", sensor.Hostname, sensor.SID)
+		if len(sensor.Tags) > 0 {
+			fmt.Printf("- %s (%s) [Platform: %s, Tags: %v]\n", sensor.Hostname, sensor.SID, sensor.GetPlatformString(), sensor.Tags)
+		} else {
+			fmt.Printf("- %s (%s) [Platform: %s]\n", sensor.Hostname, sensor.SID, sensor.GetPlatformString())
+		}
 	}
 
 	fmt.Print("\nDo you want to proceed with running the command on these sensors? [y/N] ")
@@ -1046,13 +1080,18 @@ func runRunTask(cmd *cobra.Command, args []string) {
 	var successCount, failCount int
 	for _, sensor := range filtered {
 		for i, command := range commands {
-			if i > 0 {
+			if i > 0 && taskRandomDelay {
 				addRandomDelay()
 			}
 
+			// Debug output
+			color.Blue("Sending task to sensor: %s (%s)", sensor.Hostname, sensor.SID)
+			color.Blue("Command: %s", command)
+			color.Blue("Context: %s", taskContext)
+
 			if taskReliable {
 				// Use reliable tasking
-				if err := api.CreateReliableTask(creds, sensor.SID, command, taskContext); err != nil {
+				if err := api.CreateReliableTask(creds, sensor.SID, command, taskContext, taskTTL); err != nil {
 					color.Red("Failed to send reliable task to sensor %s (%s): %v", sensor.Hostname, sensor.SID, err)
 					failCount++
 				} else {
@@ -1098,9 +1137,12 @@ func runPutTask(cmd *cobra.Command, args []string) {
 	fmt.Print(printBanner())
 
 	// Initialize credentials
-	creds := &auth.Credentials{
-		OID:    oid,
-		APIKey: apiKey,
+	creds := auth.NewCredentials(oid, apiKey)
+
+	// Validate credentials
+	if err := creds.ValidateCredentials(); err != nil {
+		color.Red("Error: %v", err)
+		os.Exit(1)
 	}
 
 	// List all sensors
@@ -1177,29 +1219,8 @@ func runPutTask(cmd *cobra.Command, args []string) {
 			}
 
 			if taskReliable {
-				// Prepare reliable tasking request data
-				data := map[string]interface{}{
-					"task": command,
-					"sid":  sensor.SID,
-					"ttl":  3600, // 1 hour TTL
-				}
-
-				// Add context if provided
-				if taskContext != "" {
-					data["context"] = taskContext
-				} else if taskInvestigationID != "" {
-					data["context"] = taskInvestigationID
-				}
-
-				jsonData, err := json.Marshal(data)
-				if err != nil {
-					color.Red("Failed to prepare reliable task for sensor %s (%s): %v", sensor.Hostname, sensor.SID, err)
-					failCount++
-					continue
-				}
-
-				// Send reliable task request
-				if err := api.CreateExtensionRequest(creds, "ext-reliable-tasking", "task", string(jsonData)); err != nil {
+				// Use reliable tasking
+				if err := api.CreateReliableTask(creds, sensor.SID, command, taskContext, taskTTL); err != nil {
 					color.Red("Failed to send reliable task to sensor %s (%s): %v", sensor.Hostname, sensor.SID, err)
 					failCount++
 				} else {

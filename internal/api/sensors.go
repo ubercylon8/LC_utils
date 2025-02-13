@@ -10,6 +10,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,7 +45,8 @@ func ListSensors(creds *auth.Credentials, opts *ListOptions) ([]Sensor, error) {
 		if opts.Limit > 0 {
 			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
 		}
-		if opts.WithTags {
+		// Always fetch tags if we need them for filtering
+		if opts.WithTags || opts.FilterTag != "" {
 			q.Set("with_tags", "true")
 		}
 		if opts.WithIP != "" {
@@ -66,7 +68,11 @@ func ListSensors(creds *auth.Credentials, opts *ListOptions) ([]Sensor, error) {
 	}
 
 	// Set API key in Authorization header
-	req.Header.Set("Authorization", creds.GetAuthHeader())
+	authHeader, err := creds.GetAuthHeader()
+	if err != nil {
+		return nil, fmt.Errorf("error getting auth header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
 
 	// Make request
 	client := &http.Client{}
@@ -91,18 +97,38 @@ func ListSensors(creds *auth.Credentials, opts *ListOptions) ([]Sensor, error) {
 		return nil, fmt.Errorf("error decoding response: %w", err)
 	}
 
-	// Filter online sensors if requested
-	if opts != nil && opts.OnlyOnline {
-		var onlineSensors []Sensor
-		for _, sensor := range sensorList.Sensors {
-			if sensor.IsOnline {
-				onlineSensors = append(onlineSensors, sensor)
+	// Filter sensors based on criteria
+	var filteredSensors []Sensor
+	for _, sensor := range sensorList.Sensors {
+		include := true
+
+		// Filter by online status if requested
+		if opts != nil && opts.OnlyOnline && !sensor.IsOnline {
+			include = false
+			continue
+		}
+
+		// Filter by tag if specified
+		if opts != nil && opts.FilterTag != "" {
+			tagFound := false
+			for _, tag := range sensor.Tags {
+				if tag == opts.FilterTag {
+					tagFound = true
+					break
+				}
+			}
+			if !tagFound {
+				include = false
+				continue
 			}
 		}
-		return onlineSensors, nil
+
+		if include {
+			filteredSensors = append(filteredSensors, sensor)
+		}
 	}
 
-	return sensorList.Sensors, nil
+	return filteredSensors, nil
 }
 
 // GetOnlineStatus retrieves the online status of multiple sensors.
@@ -118,48 +144,46 @@ func ListSensors(creds *auth.Credentials, opts *ListOptions) ([]Sensor, error) {
 //   - error: Any error that occurred during the operation
 func GetOnlineStatus(creds *auth.Credentials, sensorIDs []string) (*OnlineStatusResponse, error) {
 	// Build URL
-	u, err := url.Parse(fmt.Sprintf("%s/v1/online/%s", baseURL, creds.OID))
+	u, err := url.Parse(fmt.Sprintf("%s/v1/sensors/%s/online", baseURL, creds.OID))
 	if err != nil {
-		return &OnlineStatusResponse{Online: make(map[string]bool)}, fmt.Errorf("error parsing URL: %w", err)
+		return nil, fmt.Errorf("error parsing URL: %w", err)
 	}
-
-	// Add query parameters for sensor IDs
-	q := u.Query()
-	for _, sid := range sensorIDs {
-		q.Add("sids", sid)
-	}
-	u.RawQuery = q.Encode()
 
 	// Create request
-	req, err := http.NewRequest("GET", u.String(), nil)
+	req, err := http.NewRequest("POST", u.String(), strings.NewReader(strings.Join(sensorIDs, ",")))
 	if err != nil {
-		return &OnlineStatusResponse{Online: make(map[string]bool)}, fmt.Errorf("error creating request: %w", err)
+		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
 	// Set API key in Authorization header
-	req.Header.Set("Authorization", creds.GetAuthHeader())
+	authHeader, err := creds.GetAuthHeader()
+	if err != nil {
+		return nil, fmt.Errorf("error getting auth header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "text/plain")
 
 	// Make request
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return &OnlineStatusResponse{Online: make(map[string]bool)}, fmt.Errorf("error making request: %w", err)
+		return nil, fmt.Errorf("error making request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &OnlineStatusResponse{Online: make(map[string]bool)}, fmt.Errorf("error reading response body: %w", err)
+		return nil, fmt.Errorf("error reading response body: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return &OnlineStatusResponse{Online: make(map[string]bool)}, fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	var response OnlineStatusResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return &OnlineStatusResponse{Online: make(map[string]bool)}, fmt.Errorf("error decoding response: %w", err)
+		return nil, fmt.Errorf("error decoding response: %w", err)
 	}
 
 	return &response, nil
@@ -177,78 +201,43 @@ func GetOnlineStatus(creds *auth.Credentials, sensorIDs []string) (*OnlineStatus
 // Returns:
 //   - error: Any error that occurred during the operation
 func TagSensor(creds *auth.Credentials, sensorID string, tags TagSensorRequest) error {
-	// Handle adding tags
-	if len(tags.AddTags) > 0 {
-		// Build URL for adding tags
-		u, err := url.Parse(fmt.Sprintf("%s/v1/%s/tags", baseURL, sensorID))
-		if err != nil {
-			return fmt.Errorf("error parsing URL: %w", err)
-		}
-
-		// Add tags as a single comma-separated parameter
-		q := u.Query()
-		q.Set("tags", strings.Join(tags.AddTags, ","))
-		q.Set("oid", creds.OID)
-		u.RawQuery = q.Encode()
-
-		// Create request
-		req, err := http.NewRequest("POST", u.String(), nil)
-		if err != nil {
-			return fmt.Errorf("error creating request: %w", err)
-		}
-
-		// Set API key in Authorization header
-		req.Header.Set("Authorization", creds.GetAuthHeader())
-
-		// Make request
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("error making request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(body))
-		}
+	// Build URL
+	u, err := url.Parse(fmt.Sprintf("%s/v1/sensors/%s/%s/tags", baseURL, creds.OID, sensorID))
+	if err != nil {
+		return fmt.Errorf("error parsing URL: %w", err)
 	}
 
-	// Handle removing tags
-	if len(tags.RemoveTags) > 0 {
-		// Build URL for removing tags
-		u, err := url.Parse(fmt.Sprintf("%s/v1/%s/tags", baseURL, sensorID))
-		if err != nil {
-			return fmt.Errorf("error parsing URL: %w", err)
-		}
+	// Marshal request body
+	body, err := json.Marshal(tags)
+	if err != nil {
+		return fmt.Errorf("error encoding request body: %w", err)
+	}
 
-		// Add tags as a single comma-separated parameter
-		q := u.Query()
-		q.Set("tags", strings.Join(tags.RemoveTags, ","))
-		q.Set("oid", creds.OID)
-		u.RawQuery = q.Encode()
+	// Create request
+	req, err := http.NewRequest("POST", u.String(), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("error creating request: %w", err)
+	}
 
-		// Create request
-		req, err := http.NewRequest("DELETE", u.String(), nil)
-		if err != nil {
-			return fmt.Errorf("error creating request: %w", err)
-		}
+	// Set API key in Authorization header
+	authHeader, err := creds.GetAuthHeader()
+	if err != nil {
+		return fmt.Errorf("error getting auth header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "application/json")
 
-		// Set API key in Authorization header
-		req.Header.Set("Authorization", creds.GetAuthHeader())
+	// Make request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("error making request: %w", err)
+	}
+	defer resp.Body.Close()
 
-		// Make request
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("error making request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(body))
-		}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	return nil

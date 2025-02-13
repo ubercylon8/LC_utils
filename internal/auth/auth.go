@@ -112,8 +112,13 @@ func (c *Credentials) GetJWT() (string, error) {
 //
 // Returns:
 //   - string: The complete Authorization header value
-func (c *Credentials) GetAuthHeader() string {
-	return fmt.Sprintf("Bearer %s", c.apiKey)
+//   - error: Any error that occurred while getting the JWT token
+func (c *Credentials) GetAuthHeader() (string, error) {
+	jwt, err := c.GetJWT()
+	if err != nil {
+		return "", fmt.Errorf("failed to get JWT token: %w", err)
+	}
+	return fmt.Sprintf("Bearer %s", jwt), nil
 }
 
 // GetAPIKey returns the API key associated with these credentials.
@@ -125,11 +130,9 @@ func (c *Credentials) GetAPIKey() string {
 	return c.apiKey
 }
 
-// ValidateCredentials checks if the credentials are valid by ensuring
-// both the organization ID and API key are present and properly formatted.
-//
-// Returns:
-//   - error: An error if validation fails, nil otherwise
+// ValidateCredentials checks if the credentials are valid by attempting to obtain a JWT token.
+// It returns an error if the credentials are invalid or if there was an error communicating
+// with the authentication service.
 func (c *Credentials) ValidateCredentials() error {
 	if c.OID == "" {
 		return fmt.Errorf("organization ID is required")
@@ -137,9 +140,13 @@ func (c *Credentials) ValidateCredentials() error {
 	if c.apiKey == "" {
 		return fmt.Errorf("API key is required")
 	}
-	if !strings.HasPrefix(c.apiKey, "lc_") {
-		return fmt.Errorf("invalid API key format (should start with 'lc_')")
+
+	// Try to get a JWT token to validate credentials
+	_, err := c.GetJWT()
+	if err != nil {
+		return fmt.Errorf("invalid credentials: %w", err)
 	}
+
 	return nil
 }
 

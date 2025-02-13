@@ -89,7 +89,11 @@ func TaskSensor(creds *auth.Credentials, sensorID string, tasks []string, invest
 	}
 
 	// Set API key in Authorization header
-	req.Header.Set("Authorization", creds.GetAuthHeader())
+	authHeader, err := creds.GetAuthHeader()
+	if err != nil {
+		return nil, fmt.Errorf("error getting auth header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Make request
@@ -133,18 +137,41 @@ func TaskSensor(creds *auth.Credentials, sensorID string, tasks []string, invest
 //
 // Returns:
 //   - error: Any error that occurred during the operation
-func CreateExtensionRequest(creds *auth.Credentials, extensionName string, action string, data string) error {
+func CreateExtensionRequest(creds *auth.Credentials, extensionName string, action string, data interface{}) error {
 	// Build URL
 	u, err := url.Parse(fmt.Sprintf("%s/v1/extension/request/%s", baseURL, extensionName))
 	if err != nil {
 		return fmt.Errorf("error parsing URL: %w", err)
 	}
 
+	// Add required query parameters
+	q := u.Query()
+	q.Set("oid", creds.OID)
+	q.Set("action", action)
+	u.RawQuery = q.Encode()
+
+	// Convert data to map if it's a string
+	var taskData map[string]interface{}
+	switch v := data.(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &taskData); err != nil {
+			return fmt.Errorf("error parsing task data: %w", err)
+		}
+	case map[string]interface{}:
+		taskData = v
+	default:
+		return fmt.Errorf("unsupported data type for task data")
+	}
+
+	// Convert task data to JSON string
+	jsonData, err := json.Marshal(taskData)
+	if err != nil {
+		return fmt.Errorf("error encoding task data: %w", err)
+	}
+
 	// Prepare form data
 	form := url.Values{}
-	form.Add("oid", creds.OID)
-	form.Add("action", action)
-	form.Add("data", data)
+	form.Add("data", string(jsonData))
 
 	// Create request
 	req, err := http.NewRequest("POST", u.String(), strings.NewReader(form.Encode()))
@@ -153,7 +180,11 @@ func CreateExtensionRequest(creds *auth.Credentials, extensionName string, actio
 	}
 
 	// Set API key in Authorization header
-	req.Header.Set("Authorization", creds.GetAuthHeader())
+	authHeader, err := creds.GetAuthHeader()
+	if err != nil {
+		return fmt.Errorf("error getting auth header: %w", err)
+	}
+	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Make request
@@ -185,15 +216,16 @@ func CreateExtensionRequest(creds *auth.Credentials, extensionName string, actio
 //   - sensorID: ID of the target sensor
 //   - command: Command to execute
 //   - context: Optional context for tracking retries
+//   - ttl: Time-to-live in seconds for the task
 //
 // Returns:
 //   - error: Any error that occurred during the operation
-func CreateReliableTask(creds *auth.Credentials, sensorID string, command string, context string) error {
+func CreateReliableTask(creds *auth.Credentials, sensorID string, command string, context string, ttl int64) error {
 	// Prepare the task data
 	taskData := map[string]interface{}{
+		"task": command,
+		"ttl":  ttl,
 		"sid":  sensorID,
-		"task": fmt.Sprintf("run --shell-command '%s'", command),
-		"ttl":  3600, // 1 hour TTL
 	}
 
 	// Add context if provided
@@ -201,12 +233,6 @@ func CreateReliableTask(creds *auth.Credentials, sensorID string, command string
 		taskData["context"] = context
 	}
 
-	// Convert task data to JSON
-	jsonData, err := json.Marshal(taskData)
-	if err != nil {
-		return fmt.Errorf("error marshaling task data: %w", err)
-	}
-
 	// Send the request to the reliable tasking extension
-	return CreateExtensionRequest(creds, "ext-reliable-tasking", "task", string(jsonData))
+	return CreateExtensionRequest(creds, "ext-reliable-tasking", "task", taskData)
 }

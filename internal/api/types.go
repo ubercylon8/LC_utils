@@ -31,21 +31,22 @@ const (
 	ArchARM64 = "arm64"
 )
 
-// ListOptions defines parameters for listing sensors.
-// It provides various filtering and pagination options.
+// ListOptions contains parameters for filtering and paginating sensor lists
 type ListOptions struct {
-	// Limit sets the maximum number of results to return
+	// Limit the number of results
 	Limit int
-	// WithTags includes sensor tags in the response
+	// Include sensor tags in response
 	WithTags bool
-	// WithIP filters sensors by IP address
+	// Filter by IP address
 	WithIP string
-	// WithHostnamePrefix filters sensors by hostname prefix
+	// Filter by hostname prefix
 	WithHostnamePrefix string
-	// ContinuationToken is used for pagination
-	ContinuationToken string
-	// OnlyOnline filters to show only online sensors
+	// Only return online sensors
 	OnlyOnline bool
+	// Continuation token for pagination
+	ContinuationToken string
+	// Filter by tag
+	FilterTag string
 }
 
 // Sensor represents a LimaCharlie sensor with all its attributes.
