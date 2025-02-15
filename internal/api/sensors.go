@@ -10,7 +10,6 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -189,6 +188,12 @@ func GetOnlineStatus(creds *auth.Credentials, sensorIDs []string) (*OnlineStatus
 	return &response, nil
 }
 
+// TagSensorRequest represents a request to modify sensor tags
+type TagSensorRequest struct {
+	AddTags    []string `json:"add_tags,omitempty"`
+	RemoveTags []string `json:"remove_tags,omitempty"`
+}
+
 // TagSensor adds or removes tags from a specific sensor.
 // The function can handle both adding and removing tags in a single call.
 // If both operations are requested, adds are performed before removes.
@@ -202,19 +207,29 @@ func GetOnlineStatus(creds *auth.Credentials, sensorIDs []string) (*OnlineStatus
 //   - error: Any error that occurred during the operation
 func TagSensor(creds *auth.Credentials, sensorID string, tags TagSensorRequest) error {
 	// Build URL
-	u, err := url.Parse(fmt.Sprintf("%s/v1/sensors/%s/%s/tags", baseURL, creds.OID, sensorID))
+	u, err := url.Parse(fmt.Sprintf("%s/v1/%s/tags", baseURL, sensorID))
 	if err != nil {
 		return fmt.Errorf("error parsing URL: %w", err)
 	}
 
-	// Marshal request body
-	body, err := json.Marshal(tags)
-	if err != nil {
-		return fmt.Errorf("error encoding request body: %w", err)
+	// Add tags as query parameters
+	q := u.Query()
+	if len(tags.AddTags) > 0 {
+		for _, tag := range tags.AddTags {
+			q.Add("tags", tag)
+		}
 	}
+	if len(tags.RemoveTags) > 0 {
+		for _, tag := range tags.RemoveTags {
+			q.Add("remove_tags", tag)
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	fmt.Printf("[DEBUG] TagSensor - URL: %s\n", u.String())
 
 	// Create request
-	req, err := http.NewRequest("POST", u.String(), bytes.NewReader(body))
+	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
@@ -224,20 +239,25 @@ func TagSensor(creds *auth.Credentials, sensorID string, tags TagSensorRequest) 
 	if err != nil {
 		return fmt.Errorf("error getting auth header: %w", err)
 	}
+	fmt.Printf("[DEBUG] TagSensor - Auth Header: %s\n", authHeader[:20]+"...") // Only show first 20 chars for security
 	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
 
 	// Make request
 	client := &http.Client{}
+	fmt.Printf("[DEBUG] TagSensor - Sending request for sensor %s...\n", sensorID)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("error making request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// Read response body
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Printf("[DEBUG] TagSensor - Response Status: %d\n", resp.StatusCode)
+	fmt.Printf("[DEBUG] TagSensor - Response Body: %s\n", string(respBody))
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

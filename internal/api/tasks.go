@@ -138,6 +138,8 @@ func TaskSensor(creds *auth.Credentials, sensorID string, tasks []string, invest
 // Returns:
 //   - error: Any error that occurred during the operation
 func CreateExtensionRequest(creds *auth.Credentials, extensionName string, action string, data interface{}) error {
+	fmt.Printf("[DEBUG] CreateExtensionRequest - Received data: %+v\n", data)
+
 	// Build URL
 	u, err := url.Parse(fmt.Sprintf("%s/v1/extension/request/%s", baseURL, extensionName))
 	if err != nil {
@@ -168,6 +170,9 @@ func CreateExtensionRequest(creds *auth.Credentials, extensionName string, actio
 	if err != nil {
 		return fmt.Errorf("error encoding task data: %w", err)
 	}
+
+	// Before sending request
+	fmt.Printf("[DEBUG] CreateExtensionRequest - Final request data: %s\n", string(jsonData))
 
 	// Prepare form data
 	form := url.Values{}
@@ -221,16 +226,37 @@ func CreateExtensionRequest(creds *auth.Credentials, extensionName string, actio
 // Returns:
 //   - error: Any error that occurred during the operation
 func CreateReliableTask(creds *auth.Credentials, sensorID string, command string, context string, ttl int64) error {
+	fmt.Printf("[DEBUG] CreateReliableTask - Original command received: %q\n", command)
+
 	// Prepare the task data
+	var taskCommand string
+
+	// Check if this is a put command or run command
+	if strings.HasPrefix(command, "put") {
+		taskCommand = command
+		fmt.Printf("[DEBUG] CreateReliableTask - PUT command detected, using as is: %q\n", taskCommand)
+	} else if strings.HasPrefix(command, "run --shell-command") {
+		// Command is already properly formatted
+		taskCommand = command
+		fmt.Printf("[DEBUG] CreateReliableTask - RUN command already formatted, using as is: %q\n", taskCommand)
+	} else {
+		// For run commands that need formatting
+		taskCommand = fmt.Sprintf("run --shell-command '%s'", command)
+		fmt.Printf("[DEBUG] CreateReliableTask - RUN command formatted: %q\n", taskCommand)
+	}
+
 	taskData := map[string]interface{}{
-		"task": command,
+		"task": taskCommand,
 		"ttl":  ttl,
 		"sid":  sensorID,
 	}
 
+	fmt.Printf("[DEBUG] CreateReliableTask - Final task data: %+v\n", taskData)
+
 	// Add context if provided
 	if context != "" {
 		taskData["context"] = context
+		fmt.Printf("[DEBUG] CreateReliableTask - Added context: %q\n", context)
 	}
 
 	// Send the request to the reliable tasking extension

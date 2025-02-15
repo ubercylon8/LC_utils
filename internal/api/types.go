@@ -107,12 +107,6 @@ type OnlineStatusResponse struct {
 	Online map[string]bool `json:"online"`
 }
 
-// TagSensorRequest represents a request to modify sensor tags
-type TagSensorRequest struct {
-	AddTags    []string
-	RemoveTags []string
-}
-
 // TaskResponse represents the response from a task operation
 type TaskResponse struct {
 	Error string `json:"error,omitempty"`
