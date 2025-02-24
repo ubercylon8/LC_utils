@@ -21,6 +21,10 @@ github.com/olekukonko/tablewriter v0.0.5 h1:P2Ga83D34wi1o9J6Wh1mRuqd4mF/x/lgBS7N
 github.com/olekukonko/tablewriter v0.0.5/go.mod h1:hPp6KlRPjbx+hW8ykQs1w3UBbZlj6HuIJcUGPhkA7kY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/preludeorg/libraries/go/tests/dropper v0.0.0-20250211155320-d28bf7c4a919 h1:5UsnH5vr4ZUAL8wtz7nXWpC4LAUXT72bQ68rzc7+l+0=
+github.com/preludeorg/libraries/go/tests/dropper v0.0.0-20250211155320-d28bf7c4a919/go.mod h1:pU4Lj0+FCcdQGMtT7P2qzNngoW/rKybuR4z7T9puNa0=
+github.com/preludeorg/libraries/go/tests/endpoint v0.0.0-20250211155320-d28bf7c4a919 h1:hyjj48DLHh/HaNPPhxZtHLNLmFCx/XAqZmvMoip/YBE=
+github.com/preludeorg/libraries/go/tests/endpoint v0.0.0-20250211155320-d28bf7c4a919/go.mod h1:A6TYm/x6ehzNFvc4v7b4EIGzx2RVvvvZRbOBkkG/k8g=
 github.com/rivo/uniseg v0.2.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=

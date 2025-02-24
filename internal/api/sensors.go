@@ -212,52 +212,86 @@ func TagSensor(creds *auth.Credentials, sensorID string, tags TagSensorRequest) 
 		return fmt.Errorf("error parsing URL: %w", err)
 	}
 
-	// Add tags as query parameters
+	// Add query parameters
 	q := u.Query()
 	if len(tags.AddTags) > 0 {
 		for _, tag := range tags.AddTags {
 			q.Add("tags", tag)
 		}
-	}
-	if len(tags.RemoveTags) > 0 {
-		for _, tag := range tags.RemoveTags {
-			q.Add("remove_tags", tag)
+		// Create POST request for adding tags
+		u.RawQuery = q.Encode()
+		req, err := http.NewRequest("POST", u.String(), nil)
+		if err != nil {
+			return fmt.Errorf("error creating request: %w", err)
+		}
+
+		// Set API key in Authorization header
+		authHeader, err := creds.GetAuthHeader()
+		if err != nil {
+			return fmt.Errorf("error getting auth header: %w", err)
+		}
+		fmt.Printf("[DEBUG] TagSensor - Auth Header: %s\n", authHeader[:20]+"...") // Only show first 20 chars for security
+		req.Header.Set("Authorization", authHeader)
+
+		// Make request
+		client := &http.Client{}
+		fmt.Printf("[DEBUG] TagSensor - Sending POST request to add tags for sensor %s...\n", sensorID)
+		fmt.Printf("[DEBUG] TagSensor - URL: %s\n", u.String())
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("error making request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		// Read response body
+		respBody, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[DEBUG] TagSensor - Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("[DEBUG] TagSensor - Response Body: %s\n", string(respBody))
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(respBody))
 		}
 	}
-	u.RawQuery = q.Encode()
 
-	fmt.Printf("[DEBUG] TagSensor - URL: %s\n", u.String())
+	if len(tags.RemoveTags) > 0 {
+		// Reset query for remove operation
+		q = url.Values{}
+		// Join tags with commas for removal
+		q.Set("tags", strings.Join(tags.RemoveTags, ","))
 
-	// Create request
-	req, err := http.NewRequest("POST", u.String(), nil)
-	if err != nil {
-		return fmt.Errorf("error creating request: %w", err)
-	}
+		// Create DELETE request for removing tags
+		u.RawQuery = q.Encode()
+		req, err := http.NewRequest("DELETE", u.String(), nil)
+		if err != nil {
+			return fmt.Errorf("error creating request: %w", err)
+		}
 
-	// Set API key in Authorization header
-	authHeader, err := creds.GetAuthHeader()
-	if err != nil {
-		return fmt.Errorf("error getting auth header: %w", err)
-	}
-	fmt.Printf("[DEBUG] TagSensor - Auth Header: %s\n", authHeader[:20]+"...") // Only show first 20 chars for security
-	req.Header.Set("Authorization", authHeader)
+		// Set API key in Authorization header
+		authHeader, err := creds.GetAuthHeader()
+		if err != nil {
+			return fmt.Errorf("error getting auth header: %w", err)
+		}
+		fmt.Printf("[DEBUG] TagSensor - Auth Header: %s\n", authHeader[:20]+"...") // Only show first 20 chars for security
+		req.Header.Set("Authorization", authHeader)
 
-	// Make request
-	client := &http.Client{}
-	fmt.Printf("[DEBUG] TagSensor - Sending request for sensor %s...\n", sensorID)
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("error making request: %w", err)
-	}
-	defer resp.Body.Close()
+		// Make request
+		client := &http.Client{}
+		fmt.Printf("[DEBUG] TagSensor - Sending DELETE request to remove tags for sensor %s...\n", sensorID)
+		fmt.Printf("[DEBUG] TagSensor - URL: %s\n", u.String())
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("error making request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	// Read response body
-	respBody, _ := io.ReadAll(resp.Body)
-	fmt.Printf("[DEBUG] TagSensor - Response Status: %d\n", resp.StatusCode)
-	fmt.Printf("[DEBUG] TagSensor - Response Body: %s\n", string(respBody))
+		// Read response body
+		respBody, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[DEBUG] TagSensor - Response Status: %d\n", resp.StatusCode)
+		fmt.Printf("[DEBUG] TagSensor - Response Body: %s\n", string(respBody))
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(respBody))
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("request failed with status: %d, body: %s", resp.StatusCode, string(respBody))
+		}
 	}
 
 	return nil
